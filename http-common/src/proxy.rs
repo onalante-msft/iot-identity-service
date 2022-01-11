@@ -6,6 +6,11 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{io, io::IoSlice};
 
+use hyper::client::connect::Connection;
+use hyper::client::HttpConnector;
+use hyper_openssl::HttpsConnector;
+use openssl::ssl;
+use openssl::x509::X509;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pub enum MaybeProxyStream<S> {
@@ -13,10 +18,7 @@ pub enum MaybeProxyStream<S> {
     Proxy(hyper_proxy::ProxyStream<S>),
 }
 
-impl<S> AsyncRead for MaybeProxyStream<S>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeProxyStream<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -29,10 +31,7 @@ where
     }
 }
 
-impl<S> AsyncWrite for MaybeProxyStream<S>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeProxyStream<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
@@ -77,11 +76,7 @@ where
     }
 }
 
-impl<S> hyper::client::connect::Connection for MaybeProxyStream<S>
-where
-    S: hyper::client::connect::Connection,
-    hyper_proxy::ProxyStream<S>: hyper::client::connect::Connection,
-{
+impl<S: AsyncRead + AsyncWrite + Connection + Unpin> Connection for MaybeProxyStream<S> {
     fn connected(&self) -> hyper::client::connect::Connected {
         match self {
             MaybeProxyStream::NoProxy(stream) => stream.connected(),
@@ -96,19 +91,18 @@ pub enum MaybeProxyConnector<C> {
     Proxy(hyper_proxy::ProxyConnector<C>),
 }
 
-impl MaybeProxyConnector<hyper_openssl::HttpsConnector<hyper::client::HttpConnector>> {
+impl MaybeProxyConnector<HttpsConnector<HttpConnector>> {
     pub fn new(
         proxy_uri: Option<hyper::Uri>,
         identity: Option<(&[u8], &openssl::pkey::PKeyRef<openssl::pkey::Private>)>,
-        trusted_certs: &[openssl::x509::X509],
+        trusted_certs: &[X509],
     ) -> io::Result<Self> {
-        let mut http_connector = hyper::client::HttpConnector::new();
+        let mut http_connector = HttpConnector::new();
         http_connector.enforce_http(false);
 
         let tls_connector = make_tls_connector(identity, trusted_certs)?;
 
-        let https_connector =
-            hyper_openssl::HttpsConnector::with_connector(http_connector, tls_connector)?;
+        let https_connector = HttpsConnector::with_connector(http_connector, tls_connector)?;
 
         if let Some(proxy_uri) = proxy_uri {
             let proxy = uri_to_proxy(proxy_uri)?;
@@ -127,6 +121,7 @@ impl MaybeProxyConnector<hyper_openssl::HttpsConnector<hyper::client::HttpConnec
             //
             // `tls_connector` was already consumed by `hyper_openssl::HttpsConnector::with_connector`
             // and doesn't impl `Clone`, so the new one has to be built from scratch via `make_tls_connector`
+
             let proxy_tls_connector = make_tls_connector(identity, trusted_certs)?;
             proxy_connector.set_tls(Some(proxy_tls_connector.build()));
 
@@ -139,9 +134,9 @@ impl MaybeProxyConnector<hyper_openssl::HttpsConnector<hyper::client::HttpConnec
 
 fn make_tls_connector(
     identity: Option<(&[u8], &openssl::pkey::PKeyRef<openssl::pkey::Private>)>,
-    trusted_certs: &[openssl::x509::X509],
-) -> io::Result<openssl::ssl::SslConnectorBuilder> {
-    let mut tls_connector = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())?;
+    trusted_certs: &[X509],
+) -> io::Result<ssl::SslConnectorBuilder> {
+    let mut tls_connector = ssl::SslConnector::builder(ssl::SslMethod::tls())?;
 
     let cert_store = tls_connector.cert_store_mut();
     for trusted_cert in trusted_certs {
@@ -182,7 +177,7 @@ fn make_tls_connector(
     }
 
     if let Some((certs, private_key)) = identity {
-        let mut device_id_certs = openssl::x509::X509::stack_from_pem(certs)?.into_iter();
+        let mut device_id_certs = X509::stack_from_pem(certs)?.into_iter();
         let client_cert = device_id_certs.next().ok_or_else(|| {
             io::Error::new(io::ErrorKind::Other, "device identity cert not found")
         })?;
