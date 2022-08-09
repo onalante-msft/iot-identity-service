@@ -132,8 +132,8 @@ async fn generate_token(
     client: &impl SignData,
     is_registration: bool,
 ) -> Result<String, Error> {
-    let expiry = chrono::Utc::now() + chrono::Duration::seconds(30);
-    let expiry = expiry.timestamp().to_string();
+    let expiry = time::OffsetDateTime::now_utc() + time::Duration::seconds(30);
+    let expiry = expiry.unix_timestamp().to_string();
 
     let audience = audience.to_lowercase();
     let resource_uri = percent_encoding::percent_encode(audience.as_bytes(), crate::ENCODE_SET);

@@ -170,7 +170,6 @@ dependencies = [
  "aziot-tpm-client-async",
  "aziot-tpm-common",
  "base64",
- "chrono",
  "futures-util",
  "http-common",
  "hyper",
@@ -180,6 +179,7 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+ "time 0.3.13",
  "tokio",
  "url",
 ]
@@ -528,6 +528,7 @@ dependencies = [
  "serde_json",
  "structopt",
  "sysinfo",
+ "time 0.3.13",
  "tokio",
  "toml",
  "url",
@@ -1547,7 +1548,7 @@ checksum = "2a60c7ce501c71e03a9c9c0d35b861413ae925bd979cc7a4e30d060069aaac8d"
 name = "mini-sntp"
 version = "0.1.0"
 dependencies = [
- "chrono",
+ "time 0.3.13",
 ]
 
 [[package]]
@@ -2341,7 +2342,14 @@ dependencies = [
  "libc",
  "num_threads",
  "serde",
+ "time-macros",
 ]
+
+[[package]]
+name = "time-macros"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42657b1a6f4d817cda8e7a0ace261fe0cc946cf3a80314390b22cc61ae080792"
 
 [[package]]
 name = "tinyvec"

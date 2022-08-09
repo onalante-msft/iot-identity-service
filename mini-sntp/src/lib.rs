@@ -20,8 +20,8 @@ pub use error::{BadServerResponseReason, Error};
 /// The result of [`query`]
 #[derive(Debug)]
 pub struct SntpTimeQueryResult {
-    pub local_clock_offset: chrono::Duration,
-    pub round_trip_delay: chrono::Duration,
+    pub local_clock_offset: time::Duration,
+    pub round_trip_delay: time::Duration,
 }
 
 /// Executes an SNTP query against the NTPv3 server at the given address.
@@ -110,22 +110,21 @@ fn query_inner(socket: &UdpSocket, addr: impl ToSocketAddrs) -> Result<SntpTimeQ
     Ok(result)
 }
 
-fn create_client_request() -> ([u8; 48], chrono::DateTime<chrono::Utc>) {
+fn create_client_request() -> ([u8; 48], time::OffsetDateTime) {
     let sntp_epoch = sntp_epoch();
 
     let mut buf = [0_u8; 48];
     buf[0] = 0b00_011_011; // version_number: 3, mode: 3 (client)
 
-    let transmit_timestamp = chrono::Utc::now();
+    let transmit_timestamp = time::OffsetDateTime::now_utc();
 
     #[cfg(test)]
-    let transmit_timestamp = transmit_timestamp - chrono::Duration::seconds(30); // simulate unsynced local clock
+    let transmit_timestamp = transmit_timestamp - time::Duration::seconds(30); // simulate unsynced local clock
 
     let mut duration_since_sntp_epoch = transmit_timestamp - sntp_epoch;
 
-    let integral_part = duration_since_sntp_epoch.num_seconds();
-    duration_since_sntp_epoch =
-        duration_since_sntp_epoch - chrono::Duration::seconds(integral_part);
+    let integral_part = duration_since_sntp_epoch.whole_seconds();
+    duration_since_sntp_epoch -= time::Duration::seconds(integral_part);
 
     assert!(integral_part >= 0 && integral_part < i64::from(u32::max_value()));
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -133,10 +132,9 @@ fn create_client_request() -> ([u8; 48], chrono::DateTime<chrono::Utc>) {
     buf[40..44].copy_from_slice(&integral_part[..]);
 
     let fractional_part = duration_since_sntp_epoch
-        .num_nanoseconds()
-        .expect("can't overflow nanoseconds");
+        .whole_nanoseconds();
     let fractional_part = (fractional_part << 32) / 1_000_000_000;
-    assert!(fractional_part >= 0 && fractional_part < i64::from(u32::max_value()));
+    assert!(fractional_part >= 0 && fractional_part < i128::from(u32::max_value()));
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let fractional_part = (fractional_part as u32).to_be_bytes();
     buf[44..48].copy_from_slice(&fractional_part[..]);
@@ -154,14 +152,14 @@ fn create_client_request() -> ([u8; 48], chrono::DateTime<chrono::Utc>) {
 
 fn parse_server_response(
     buf: [u8; 48],
-    request_transmit_timestamp: chrono::DateTime<chrono::Utc>,
+    request_transmit_timestamp: time::OffsetDateTime,
 ) -> Result<SntpTimeQueryResult, Error> {
     let sntp_epoch = sntp_epoch();
 
-    let destination_timestamp = chrono::Utc::now();
+    let destination_timestamp = time::OffsetDateTime::now_utc();
 
     #[cfg(test)]
-    let destination_timestamp = destination_timestamp - chrono::Duration::seconds(30); // simulate unsynced local clock
+    let destination_timestamp = destination_timestamp - time::Duration::seconds(30); // simulate unsynced local clock
 
     let packet = Packet::parse(buf, sntp_epoch);
     #[cfg(test)]
@@ -217,10 +215,9 @@ fn parse_server_response(
     })
 }
 
-fn sntp_epoch() -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::<chrono::Utc>::from_utc(
-        chrono::NaiveDate::from_ymd(1900, 1, 1).and_time(chrono::NaiveTime::from_hms(0, 0, 0)),
-        chrono::Utc,
+fn sntp_epoch() -> time::OffsetDateTime {
+    time::macros::datetime!(
+        1900-01-01 00:00 UTC
     )
 }
 
@@ -236,45 +233,37 @@ struct Packet {
     root_delay: u32,
     root_dispersion: u32,
     reference_identifier: u32,
-    reference_timestamp: chrono::DateTime<chrono::Utc>,
-    originate_timestamp: chrono::DateTime<chrono::Utc>,
-    receive_timestamp: chrono::DateTime<chrono::Utc>,
-    transmit_timestamp: chrono::DateTime<chrono::Utc>,
+    reference_timestamp: time::OffsetDateTime,
+    originate_timestamp: time::OffsetDateTime,
+    receive_timestamp: time::OffsetDateTime,
+    transmit_timestamp: time::OffsetDateTime,
 }
 
 impl Packet {
-    fn parse(buf: [u8; 48], sntp_epoch: chrono::DateTime<chrono::Utc>) -> Self {
+    fn parse(buf: [u8; 48], sntp_epoch: time::OffsetDateTime) -> Self {
         let leap_indicator = (buf[0] & 0b11_000_000) >> 6;
         let version_number = (buf[0] & 0b00_111_000) >> 3;
         let mode = buf[0] & 0b00_000_111;
         let stratum = buf[1];
         let poll_interval = buf[2];
         let precision = buf[3];
-        let root_delay = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        let root_dispersion = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-        let reference_identifier = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        let root_delay = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+        let root_dispersion = u32::from_be_bytes(buf[8..12].try_into().unwrap());
+        let reference_identifier = u32::from_be_bytes(buf[12..16].try_into().unwrap());
         let reference_timestamp = deserialize_timestamp(
-            [
-                buf[16], buf[17], buf[18], buf[19], buf[20], buf[21], buf[22], buf[23],
-            ],
+            buf[16..24].try_into().unwrap(),
             sntp_epoch,
         );
         let originate_timestamp = deserialize_timestamp(
-            [
-                buf[24], buf[25], buf[26], buf[27], buf[28], buf[29], buf[30], buf[31],
-            ],
+            buf[24..32].try_into().unwrap(),
             sntp_epoch,
         );
         let receive_timestamp = deserialize_timestamp(
-            [
-                buf[32], buf[33], buf[34], buf[35], buf[36], buf[37], buf[38], buf[39],
-            ],
+            buf[32..40].try_into().unwrap(),
             sntp_epoch,
         );
         let transmit_timestamp = deserialize_timestamp(
-            [
-                buf[40], buf[41], buf[42], buf[43], buf[44], buf[45], buf[46], buf[47],
-            ],
+            buf[40..48].try_into().unwrap(),
             sntp_epoch,
         );
 
@@ -298,11 +287,11 @@ impl Packet {
 
 fn deserialize_timestamp(
     raw: [u8; 8],
-    sntp_epoch: chrono::DateTime<chrono::Utc>,
-) -> chrono::DateTime<chrono::Utc> {
-    let integral_part = i64::from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]));
-    let fractional_part = i64::from(u32::from_be_bytes([raw[4], raw[5], raw[6], raw[7]]));
-    let duration_since_sntp_epoch = chrono::Duration::nanoseconds(
+    sntp_epoch: time::OffsetDateTime,
+) -> time::OffsetDateTime {
+    let integral_part = i64::from(u32::from_be_bytes(raw[..4].try_into().unwrap()));
+    let fractional_part = i64::from(u32::from_be_bytes(raw[4..].try_into().unwrap()));
+    let duration_since_sntp_epoch = time::Duration::nanoseconds(
         integral_part * 1_000_000_000 + ((fractional_part * 1_000_000_000) >> 32),
     );
 
@@ -324,14 +313,14 @@ mod tests {
         println!("round-trip delay: {}", round_trip_delay);
 
         assert!(
-            (local_clock_offset - chrono::Duration::seconds(30))
-                .num_seconds()
+            (local_clock_offset - time::Duration::seconds(30))
+                .whole_seconds()
                 .abs()
                 < 1
         );
         assert!(
-            (round_trip_delay - chrono::Duration::seconds(10))
-                .num_seconds()
+            (round_trip_delay - time::Duration::seconds(10))
+                .whole_seconds()
                 .abs()
                 < 1
         );

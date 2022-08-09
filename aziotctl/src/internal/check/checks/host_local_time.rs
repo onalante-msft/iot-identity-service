@@ -59,7 +59,7 @@ impl HostLocalTime {
             }
         };
 
-        let offset = local_clock_offset.num_seconds().abs();
+        let offset = local_clock_offset.whole_seconds().abs();
         self.offset = Some(offset);
         if offset >= 10 {
             return Ok(CheckResult::Warning(anyhow!(

@@ -6,4 +6,4 @@ edition = "2021"
 publish = false
 
 [dependencies]
-chrono = "0.4"
+time = { version = "0.3", features = ["macros"] }

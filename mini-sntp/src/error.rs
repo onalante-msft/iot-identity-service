@@ -60,8 +60,8 @@ impl std::error::Error for Error {
 pub enum BadServerResponseReason {
     LeapIndicator(u8),
     OriginateTimestamp {
-        expected: chrono::DateTime<chrono::Utc>,
-        actual: chrono::DateTime<chrono::Utc>,
+        expected: time::OffsetDateTime,
+        actual: time::OffsetDateTime,
     },
     Mode(u8),
     VersionNumber(u8),

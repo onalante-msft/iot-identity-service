@@ -12,7 +12,7 @@ pub trait CertificateValidityExt {
 
 impl CertificateValidityExt for CertificateValidity {
     fn to_check_result(&self) -> anyhow::Result<CheckResult> {
-        let now = chrono::Utc::now();
+        let now = time::OffsetDateTime::now_utc();
         if self.not_before > now {
             Err(anyhow!(
                 "{} '{}' has not-before time {} which is in the future",
@@ -27,13 +27,13 @@ impl CertificateValidityExt for CertificateValidity {
                 self.cert_id,
                 self.not_after,
             ))
-        } else if self.not_after < now + chrono::Duration::days(7) {
+        } else if self.not_after < now + time::Duration::days(7) {
             Ok(CheckResult::Warning(anyhow!(
                 "{} '{}' will expire soon ({}, in {} days)",
                 self.cert_name,
                 self.cert_id,
                 self.not_after,
-                (self.not_after - now).num_days(),
+                (self.not_after - now).whole_days(),
             )))
         } else {
             Ok(CheckResult::Ok)

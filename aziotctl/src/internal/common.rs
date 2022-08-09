@@ -14,8 +14,8 @@ use tokio::io::AsyncReadExt;
 pub struct CertificateValidity {
     pub(crate) cert_name: String,
     pub(crate) cert_id: String,
-    pub(crate) not_after: chrono::DateTime<chrono::Utc>,
-    pub(crate) not_before: chrono::DateTime<chrono::Utc>,
+    pub(crate) not_after: time::OffsetDateTime,
+    pub(crate) not_before: time::OffsetDateTime,
 }
 
 impl CertificateValidity {
@@ -26,15 +26,20 @@ impl CertificateValidity {
         aziotcs_user: &User,
     ) -> Result<CertificateValidity> {
         fn parse_openssl_time(
-            time: &openssl::asn1::Asn1TimeRef,
-        ) -> chrono::ParseResult<chrono::DateTime<chrono::Utc>> {
+            openssl_time: &openssl::asn1::Asn1TimeRef,
+        ) -> Result<time::OffsetDateTime, time::error::Parse> {
             // openssl::asn1::Asn1TimeRef does not expose any way to convert the ASN1_TIME to a Rust-friendly type
             //
             // Its Display impl uses ASN1_TIME_print, so we convert it into a String and parse it back
-            // into a chrono::DateTime<chrono::Utc>
-            let time = time.to_string();
-            let time = chrono::NaiveDateTime::parse_from_str(&time, "%b %e %H:%M:%S %Y GMT")?;
-            Ok(chrono::DateTime::<chrono::Utc>::from_utc(time, chrono::Utc))
+            // into a time::PrimitiveDateTime.
+            time::PrimitiveDateTime::parse(
+                &openssl_time.to_string(),
+                &time::format_description::parse(
+                    "[month repr:short case_sensitive:true] [day] \
+                    [hour]:[minute]:[second] \
+                    [year] GMT"
+                ).unwrap()
+            ).map(time::PrimitiveDateTime::assume_utc)
         }
 
         let cert_path = cert_path.as_ref();
